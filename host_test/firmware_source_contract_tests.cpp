@@ -126,6 +126,18 @@ std::string read_source(const std::string& relative_path) {
   return contents.str();
 }
 
+// Binary assets (e.g. Ogg fixtures) must bypass Windows text-mode CRLF
+// translation and the 0x1A end-of-file behavior; text source reads keep
+// using read_source above.
+std::string read_binary_source(const std::string& relative_path) {
+  std::ifstream input(std::string(EASY_INPUT_REPO_ROOT) + "/" + relative_path,
+                      std::ios::binary);
+  assert(input.good());
+  std::ostringstream contents;
+  contents << input.rdbuf();
+  return contents.str();
+}
+
 std::string section(const std::string& source,
                     const std::string& begin_marker,
                     const std::string& end_marker) {
@@ -1217,7 +1229,7 @@ void speaker_opus_probe_is_conditional_fixed_and_reusable() {
   const auto speaker_output =
       read_source("main/platform/speaker_output.cpp");
   const auto app_main = read_source("main/app_main.cpp");
-  const auto fixture = read_source(
+  const auto fixture = read_binary_source(
       "diagnostics/speaker_opus_probe/assets/easyinput_boot_probe.ogg");
   const auto input_handler = section(
       app_main,
