@@ -106,3 +106,52 @@
 - [x] 已记录全部后续改动层，以及第 08 步能力声明和 BLE 状态 512 字节检查。
 - [x] 已记录 v1 冻结与不兼容变化必须升级版本和能力声明。
 - [x] 当前缺少 Host Action／kind `0x05` 实现按预期记为待实现，不误报为冲突或已完成功能。
+
+---
+
+## 学员分支复核记录（2026-09-14 · my-host-action-practice-v2）
+
+> 学员在本机练习分支按本卡重新执行核对。上方基线内容（含作者侧 `main@34087cd...` 操作前状态）保持原样，本节只增量记录本分支证据，不覆盖、不冒充基线记录。
+
+### 操作前文件状态（本分支）
+
+- 当前分支：`my-host-action-practice-v2`（`.git/HEAD`）；HEAD：`8806d8d6e2a751cb08a5173316b2bdf300e064d2`（`docs(flow): log step 01-02 practice handoff cards`），父提交 `44bd2bad...`（Windows 宿主测试 ogg 二进制读取修复，已提交）；仓库克隆自 `https://github.com/CY-CHENYUE/easy-input-maker.git`（起点 `7d5f1574...`，见 `.git/logs/HEAD`）。
+- 本节点写入前未执行 `git status`；依据 `.git/logs/HEAD` 与工作区文件核对，疑似唯一未提交变更是 `flow/进展.md` 顶部 2026-09-10 第 03 步记录（HEAD 提交信息只覆盖第 01–02 步），学员可用 `git status --short` 复核；未发现其他 `flow/` 之外变更的证据。
+- 写入前全仓 grep：没有任何 Host Action 源码文件，`host_action` 字样仅命中 `flow/` 文档与 starter 防护测试本身。
+
+### 独立源码复核（当前树 file:line）
+
+| 合同项 | 当前证据 | 结论 |
+|---|---|---|
+| Report ID 0x11／容器 63 | `components/keyboard/include/keyboard/fixed_text_protocol.h:9-14`（0x11、payload 63、header 4、chunk data 59）；`main/platform/usb_hid.cpp:29,39`、`main/platform/ble_hid.cpp:58,63`；描述符 `usb_hid.cpp:106-113`、`ble_hid.cpp:270-277`（ID 0x11，Count 63） | 与合同一致 |
+| 头部字节布局 | `components/keyboard/src/ble_fixed_text_stream.cpp:61-69`：`[0]`kind、`[1]`chunk、`[2]`total、`[3]`len，数据自 `[4]`；USB 同签名 `main/platform/usb_hid.cpp:1602-1629` | 4+36=40 占 `[0..39]`，`[40..62]` 为 23 字节余量，固定字段可完整承载 |
+| kind 编号占用 | `0x01` fixed_text_protocol.h:10／usb_hid.cpp:34；`0x02`、`0x03` usb_hid.cpp:35-36、ble_hid.cpp:59-60；`0x04` status_hid_protocol.h:20 | App Command kind `0x05` 未被占用；其余字面量 0x05（HID Usage Page、键码、测试数据）不属此编号空间 |
+| 单通道选择 | `components/keyboard/src/transport_routing.cpp:5-9` 恒返回 `UsbFirst`；同文件 147-211 行 `KeyboardTransportLatch` 单 owner、断线不迁移；调用点 `main/app_main.cpp:1376` | 可沿用现有单通道；禁止双发与现状无冲突 |
+| Host Action 缺口 | `components/keyboard/include/keyboard/keymap.h:77-82` `FirmwareEventKind` 无 HostAction；防护测试 `host_test/firmware_source_contract_tests.cpp:3530-3543` 断言六处源文件不含 `FirmwareEventKind::HostAction`、`host_action_protocol.h`、`host_action_v1` | starter 起点合同，非冲突 |
+| 512 字节状态预算 | `components/keyboard/include/keyboard/config_status.h:11` `kConfigStatusGattSafeLen = 512`；`status_hid_protocol.h:27` 最大 JSON 等同该值 | 第 08 步必须继续满足 |
+| 持久化路径 | `main/platform/nvs_store.cpp` 已以字符串保存整份配置 JSON（`nvs_get_str` 79/92、`nvs_set_str` 123/287） | 完整 `host_action:` 字符串后续走既有 NVS 路径 |
+
+**本分支冲突门结论**：未发现 0x05 被占用、63 字节容器无法承载固定字段或其他直接冲突；按授权写入记录，不停止、不等待二次确认。
+
+### 合同逐项复述与自检
+
+1. 配置层保存完整 `host_action:<canonical-lowercase-uuid>`；Keymap／运行态／持久化都保留前缀，仅运行传输编码去掉前缀。
+2. 前缀后恰好 36 个 ASCII；连字符在从 1 起第 9、14、19、24 位；其余位置仅 `0-9`、`a-f`。
+3. 大写、长度错误、连字符位置错误、非法字符一律直接拒绝并 fail closed；不自动转小写、不修复后接受。
+4. 不增加 UUID version 限制，不增加 nil UUID 限制。
+5. 传输固定：Report ID `0x11`、kind `0x05`、chunk index `0`、total chunks `1`、data length `36`；数据为 payload `[4..39]` 的 36 字节裸 UUID ASCII。
+6. `[40..62]` 只是既有 63 字节容器余量；63 是 App Command 容器大小，不是 Host Action 数据长度。
+7. kind `0x04` 已用于状态响应，v1 不复用、不改写。
+8. 按下发送一次；松开不发送、不补发释放消息；非规范配置不产生也不发送事件。
+9. 固件不保存应用路径、名称或 Bundle ID；“UUID → 本机应用”映射只保存在 EasyInput App 本地；App 同步给固件的是含真机 UUID 的按键配置。
+10. 固定示例 UUID 只用于宿主测试，不作为最终／默认应用映射或固件内置应用身份。
+11. USB 与 BLE 发送完全相同内容，沿用现有单通道选择；禁止双发，禁止发送失败迁移到另一通道。
+12. 完整改动层六项不缺：配置解析与持久化、Keymap 与事件、共享协议编码、USB／BLE 适配、宿主测试、第 08 步 `"host_action_v1": true` 能力声明与所有相关 BLE 状态 ≤512 字节检查；能力声明在第 08 步前不得出现。
+13. v1 全部字段已冻结；未来不兼容变化必须使用新版本与新能力声明，不得在仍宣称 v1 时静默改写。
+14. 本节点不改代码、不运行测试／构建／烧录、不离开本仓；缺少 Host Action／kind `0x05` 实现记为后续待实现，不误报为冲突，也不冒充已完成功能。
+
+### 操作后状态
+
+- 本节点仅新增本节，并在 `flow/进展.md` 顶部追加 2026-09-14 交接条。
+- `flow/decisions.md` 第 16-21 行已有 2026-08-22 冻结合同决策、`flow/plan.md` 第 20 行已有合同入口，内容与本合同一致，未重复新增决策或计划条目。
+- 零代码变更：未触碰 `main/`、`components/`、`host_test/`、`CMakeLists.txt` 等任何 `flow/` 之外文件；未运行测试、构建或烧录；未访问其他电脑端工程或设备。
