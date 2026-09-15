@@ -236,6 +236,11 @@ void append_sync_core(std::ostringstream& out,
         << ",";
   }
   out << "\"config_max_bytes\":" << kConfigMaxJsonLen;
+  // Host Action v1 is a fixed firmware capability. It is always discoverable,
+  // including budget-shed compact variants; the legacy/static capability
+  // booleans below remain optional. The value is a JSON boolean, never a
+  // string, and this is its only declaration site for compact statuses.
+  out << ",\"host_action_v1\":true";
   if (include_usb_management_capability) {
     out << ",\"usb_management_v1\":"
         << (snapshot.usb_management_v1 ? "true" : "false");
@@ -504,7 +509,7 @@ std::string build_speaker_probe_status_json(
                               "macos");
   append_object_separator(out, &first);
   out << "\"capabilities\":{\"config_max_bytes\":" << kConfigMaxJsonLen
-      << "}";
+      << ",\"host_action_v1\":true}";
   append_bool_field(out, &first, "saved", snapshot.saved);
   append_uint_field(out, &first, "bytes", snapshot.bytes);
   append_uint_field(out, &first, "crc16", snapshot.crc16);
@@ -558,6 +563,7 @@ static std::string build_full_status_json(const ConfigStatusSnapshot& snapshot) 
       << ",\"config_max_bytes\":" << kConfigMaxJsonLen
       << ",\"usb_management_v1\":"
       << (snapshot.usb_management_v1 ? "true" : "false")
+      << ",\"host_action_v1\":true"
       << "}"
       << ",\"saved\":" << (snapshot.saved ? "true" : "false")
       << ",\"battery_mv\":" << snapshot.battery_mv

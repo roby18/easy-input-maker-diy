@@ -13,7 +13,7 @@ inline constexpr std::size_t kConfigStatusBatteryBleReserveLen = 120;
 inline constexpr char kConfigStatusFallbackJson[] =
     "{\"schema\":\"ai_keyboard.config_status.v1\",\"firmware\":\"unknown\","
     "\"phase\":\"status\",\"status\":\"status_too_large\",\"bytes\":0,\"crc16\":0,"
-    "\"capabilities\":{\"config_max_bytes\":2048},"
+    "\"capabilities\":{\"config_max_bytes\":2048,\"host_action_v1\":true},"
     "\"ptt_hotkey\":\"\",\"edit_ptt_hotkey\":\"\",\"saved\":false}";
 
 struct PowerDiagnosticsSnapshot {

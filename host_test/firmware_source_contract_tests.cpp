@@ -3608,6 +3608,46 @@ void config_status_publication_uses_shared_bounded_ble_encoders() {
   assert(final_wire.find("std::snprintf") == std::string::npos);
 }
 
+void host_action_capability_stays_in_status_json_outside_app_command_payload() {
+  // T08 separation of duties: the Report ID 0x11 / kind 0x05 Host Action
+  // payload is only the 36-byte canonical UUID body. The status capability
+  // declaration must never leak into the shared action encoder or its wire.
+  static constexpr const char* kPayloadSources[] = {
+      "components/keyboard/src/host_action_protocol.cpp",
+      "components/keyboard/include/keyboard/host_action_protocol.h",
+  };
+  for (const char* path : kPayloadSources) {
+    const auto source = read_source(path);
+    assert(source.find("host_action_v1") == std::string::npos);
+    assert(source.find("capabilities") == std::string::npos);
+  }
+
+  // The status builders must not reach into the Host Action encoder when they
+  // declare the capability; discovery (kind 0x04 status JSON) and action
+  // sending (kind 0x05) stay separate layers.
+  const auto status_cpp =
+      read_source("components/keyboard/src/config_status.cpp");
+  const auto status_h =
+      read_source("components/keyboard/include/keyboard/config_status.h");
+  assert(status_cpp.find("host_action_protocol") == std::string::npos);
+  assert(status_cpp.find("kHostActionAppCommandKind") ==
+         std::string::npos);
+  assert(status_h.find("host_action_protocol") == std::string::npos);
+
+  // The capability name is emitted once per constructor path: shared compact
+  // core, speaker probe and full status in the .cpp, plus the shared fallback
+  // document in the header. Source literals are C++ escaped, so the guard
+  // counts the wire name itself and rejects every string-quoted form.
+  assert(count_occurrences(status_cpp, "host_action_v1") == 3);
+  assert(count_occurrences(status_h, "host_action_v1") == 1);
+  assert(status_cpp.find("\\\"host_action_v1\\\":\\\"true\\\"") ==
+         std::string::npos);
+  assert(status_cpp.find("\\\"host_action_v1\\\": \\\"true\\\"") ==
+         std::string::npos);
+  assert(status_h.find("\\\"host_action_v1\\\":\\\"true\\\"") ==
+         std::string::npos);
+}
+
 }  // namespace
 
 int main() {
@@ -3645,6 +3685,7 @@ int main() {
   runtime_logs_do_not_emit_user_or_device_identifiers();
   host_action_example_uuids_never_ship_in_production_sources();
   host_action_transport_reuses_shared_encoding_and_single_route();
+  host_action_capability_stays_in_status_json_outside_app_command_payload();
   config_status_publication_uses_shared_bounded_ble_encoders();
   return 0;
 }
