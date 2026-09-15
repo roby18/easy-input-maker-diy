@@ -62,7 +62,7 @@ idf.py -C . build         # Project build complete，exit 0
 ### 本轮两个环境问题的定性与处理（非代码失败）
 
 1. **干净配置初次失败**：CMake 编译器 ABI 探测生成的 `CompilerIdCXX/a.exe` 被 Windows Defender 实时保护以机器学习泛化规则拦截（`Trojan:Win32/Wacatac.B!ml` / `Phonzy.A!ml` / `Kepavll!rfn`），CMake `file(READ ... a.exe)` 得到 `Invalid argument`。2×2 对照实验证明是**该探测二进制内容**触发（TEMP 目录同样被拦；hello-world 在 build-host 下可读可跑），与路径/源码无关。非提权会话无法添加 Defender 排除项；采用 CMake 官方支持的 `-DCMAKE_CXX_COMPILER_FORCED=TRUE` 并显式提供编译器 ID/版本以跳过该探测步骤（仅本机配置参数，不写入仓库）。后续 60 个真实测试可执行文件全部正常链接、读取、运行。
-2. **ninja 后置 Python 步骤**在沙箱内尝试写 `C:\Python314\Lib\__pycache__` 被宿主沙箱拒绝（非构建错误）；以 `PYTHONDONTWRITEBYTECODE=1` 重跑后 ninja 全步骤 exit 0。
+2. **ninja 后置 Python 步骤**在沙箱内尝试写系统 Python 自身的 `__pycache__` 目录被宿主沙箱拒绝（非构建错误）；以 `PYTHONDONTWRITEBYTECODE=1` 重跑后 ninja 全步骤 exit 0。
 
 ## CTest 数量核对
 

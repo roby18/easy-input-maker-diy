@@ -37,7 +37,7 @@
 
 ### 测试命令与结果（Windows，w64devkit GCC 13.2 + CMake 3.30.2 MinGW Makefiles）
 
-- 配置：`cmake -S host_test -B build-host`（PATH 前置 `D:\AI\hardware\easyinput\tools\w64devkit\bin`）。
+- 配置：`cmake -S host_test -B build-host`（PATH 前置仓库上级目录的备用工具链 `../../tools/w64devkit/bin`）。
 - 定向：`cmake --build build-host --target host_action_protocol_tests config_payload_tests keymap_tests` 全部链接成功；
   `ctest --test-dir build-host -R 'host_action_protocol|config_payload|keymap'` → **100% tests passed, 0 failed out of 3**。
 - 全量：`cmake --build build-host --parallel 6` 全部目标成功；
