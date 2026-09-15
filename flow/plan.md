@@ -16,6 +16,7 @@
 - [x] T10 · 烧录前只读审计全部变化；烧录与真机功能验证仍需独立授权和观察。（审计 SAFE_TO_REQUEST_FLASH 初判 NO；同日经授权脱敏 3 处 flow 本机路径后⑧转 PASS，工作区口径 YES，历史提交残留待使用者决定，见 T10 卡处置记录）
 - [x] T11 · 只读验身→人工确认→显式端口烧录→电源开关恢复正常启动；五项状态前三 YES、POST_FLASH_READY=YES、FUNCTION_VERIFIED=NO（见 T11 卡；功能验证待下一节点授权）。
 - [x] T12 · 正常模式连接/App 0.1.43 预检/配置同步确认/七项真机功能矩阵：POST_FLASH_READY=YES、CONFIG_SYNC_CONFIRMED=YES、FUNCTION_VERIFIED=YES（指示灯观察项另立，见 T12 卡）。
+- [x] T13 · 课程外增量：开机清醒期间中心灯常亮电源指示（USB 暗白/仅BLE 暗蓝/无主机极暗白，睡眠自动灭）；构建 PASS、宿主 60/60、烧录 exit 0、真机确认（见 T13 卡）。
 
 ## 合同入口
 

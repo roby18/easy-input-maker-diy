@@ -94,6 +94,10 @@ class StatusLedStrip {
   bool agent_status_active_ = false;
   bool agent_status_rendered_ = false;
   bool idle_rendered_ = false;
+  // Persistent transport state retained from status events so the idle
+  // background can show a power-on indicator without transient feedback.
+  bool usb_connected_ = false;
+  bool ble_connected_ = false;
 };
 
 }  // namespace easy_input

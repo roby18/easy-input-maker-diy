@@ -295,6 +295,8 @@ void StatusLedStrip::show_status_event(StatusLedEvent event, std::uint32_t now_m
       };
   switch (event) {
     case StatusLedEvent::BleConnected:
+      ble_connected_ = true;
+      idle_rendered_ = false;
       show_status_feedback({true,
                             ai_keyboard::FeedbackEffectKind::LightBarRipple,
                             ai_keyboard::FeedbackDirection::None,
@@ -303,6 +305,8 @@ void StatusLedStrip::show_status_event(StatusLedEvent event, std::uint32_t now_m
                             180});
       return;
     case StatusLedEvent::BleDisconnected:
+      ble_connected_ = false;
+      idle_rendered_ = false;
       show_status_feedback({true,
                             ai_keyboard::FeedbackEffectKind::ConfirmPulse,
                             ai_keyboard::FeedbackDirection::None,
@@ -311,6 +315,8 @@ void StatusLedStrip::show_status_event(StatusLedEvent event, std::uint32_t now_m
                             80});
       return;
     case StatusLedEvent::UsbConnected:
+      usb_connected_ = true;
+      idle_rendered_ = false;
       show_status_feedback({true,
                             ai_keyboard::FeedbackEffectKind::DirectionalFlow,
                             ai_keyboard::FeedbackDirection::Right,
@@ -319,6 +325,8 @@ void StatusLedStrip::show_status_event(StatusLedEvent event, std::uint32_t now_m
                             90});
       return;
     case StatusLedEvent::UsbDisconnected:
+      usb_connected_ = false;
+      idle_rendered_ = false;
       show_status_feedback({true,
                             ai_keyboard::FeedbackEffectKind::DirectionalFlow,
                             ai_keyboard::FeedbackDirection::Left,
@@ -584,6 +592,22 @@ void StatusLedStrip::render_agent_status() {
 
 void StatusLedStrip::render_idle_status() {
   set_all({});
+  // Persistent power-on indicator on the centre pixel while awake: a
+  // battery-powered board with no host link is visibly "on". USB takes the
+  // dim-white state, BLE-only shows dim blue, a device with no host shows a
+  // fainter white. Only one static frame is emitted; no periodic refresh.
+  // Transient effects, config/agent visuals and the deep-sleep black frame
+  // still own the strip and blank/override this indicator as before.
+  const std::size_t center = leds_.size() / 2U;
+  if (center < leds_.size()) {
+    if (usb_connected_) {
+      leds_[center] = {5, 5, 5};
+    } else if (ble_connected_) {
+      leds_[center] = {0, 0, 9};
+    } else {
+      leds_[center] = {2, 2, 2};
+    }
+  }
   flush();
 }
 
