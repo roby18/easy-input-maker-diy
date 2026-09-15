@@ -77,6 +77,13 @@ FirmwareEvent event_for_action(const Action& action,
         return {};
       }
       return {FirmwareEventKind::FixedText, action.text};
+    case ActionKind::HostAction:
+      // Press emits exactly one Host Action carrying the complete config
+      // value; release emits nothing.
+      if (phase == InputPhase::Released) {
+        return {};
+      }
+      return {FirmwareEventKind::HostAction, action.host_action};
     case ActionKind::PasteLast:
       return command_event("paste_last", phase);
     case ActionKind::OpenHistory:

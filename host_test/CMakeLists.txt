@@ -44,6 +44,7 @@ add_library(easy_input_keyboard_core
   ../components/keyboard/src/held_keyboard_state.cpp
   ../components/keyboard/src/hid_report_queue.cpp
   ../components/keyboard/src/hid_keycode.cpp
+  ../components/keyboard/src/host_action_protocol.cpp
   ../components/keyboard/src/input_feedback.cpp
   ../components/keyboard/src/input_test.cpp
   ../components/keyboard/src/keyboard_snapshot_delivery.cpp
@@ -117,6 +118,7 @@ target_include_directories(
 add_keyboard_host_test(held_keyboard_state_tests)
 add_keyboard_host_test(hid_report_queue_tests)
 add_keyboard_host_test(hid_keycode_tests)
+add_keyboard_host_test(host_action_protocol_tests)
 add_keyboard_host_test(input_feedback_tests)
 add_keyboard_host_test(input_test_tests)
 

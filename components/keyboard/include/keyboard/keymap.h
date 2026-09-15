@@ -45,6 +45,7 @@ enum class ActionKind {
   Copy,
   Paste,
   Undo,
+  HostAction,
 };
 
 enum class HostPlatform {
@@ -62,6 +63,9 @@ struct Action {
   ActionKind kind = ActionKind::Disabled;
   std::string hotkey;
   std::string text;
+  // Complete "host_action:<canonical-lowercase-uuid>" config value for
+  // ActionKind::HostAction; the prefix is kept until transport encoding.
+  std::string host_action;
 };
 
 class Keymap {
@@ -81,6 +85,7 @@ enum class FirmwareEventKind {
   HidTap,
   FixedText,
   AppCommand,
+  HostAction,
 };
 
 struct FirmwareEvent {

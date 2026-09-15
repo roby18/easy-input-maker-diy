@@ -22,6 +22,7 @@ idf_component_register(
     "src/held_keyboard_state.cpp"
     "src/hid_report_queue.cpp"
     "src/hid_keycode.cpp"
+    "src/host_action_protocol.cpp"
     "src/input_feedback.cpp"
     "src/input_test.cpp"
     "src/keyboard_snapshot_delivery.cpp"

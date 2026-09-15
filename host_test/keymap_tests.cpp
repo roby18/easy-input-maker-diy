@@ -206,6 +206,32 @@ void this_hardware_revision_reports_audio_unavailable() {
   assert(capabilities.audio_transport == ai_keyboard::AudioTransport::Unavailable);
 }
 
+void host_action_emits_one_event_on_press_and_none_on_release() {
+  ai_keyboard::Action action;
+  action.kind = ActionKind::HostAction;
+  // Keymap/runtime state retains the complete config value with prefix;
+  // stripping happens only in the transport encoder (T06).
+  action.host_action =
+      "host_action:123e4567-e89b-42d3-a456-426614174000";
+
+  const auto down = ai_keyboard::event_for_action(
+      action,
+      ai_keyboard::InputPhase::Pressed,
+      "RightMeta",
+      "AltGr");
+  const auto up = ai_keyboard::event_for_action(
+      action,
+      ai_keyboard::InputPhase::Released,
+      "RightMeta",
+      "AltGr");
+
+  assert(down.kind == FirmwareEventKind::HostAction);
+  assert(down.value == action.host_action);
+  assert(!down.bridge_app_hotkey);
+  assert(up.kind == FirmwareEventKind::None);
+  assert(up.value.empty());
+}
+
 int main() {
   default_mapping_covers_all_keys_and_encoder();
   voice_hold_actions_emit_press_and_release_events();
@@ -216,5 +242,6 @@ int main() {
   semantic_actions_resolve_for_each_target_platform();
   default_eight_keys_emit_exact_hid_for_both_platforms();
   this_hardware_revision_reports_audio_unavailable();
+  host_action_emits_one_event_on_press_and_none_on_release();
   return 0;
 }

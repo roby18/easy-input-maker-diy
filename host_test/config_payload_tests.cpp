@@ -4,6 +4,7 @@
 
 #include "keyboard/config_payload.h"
 #include "keyboard/fixed_text_protocol.h"
+#include "keyboard/keymap.h"
 
 using ai_keyboard::ActionKind;
 using ai_keyboard::ConfigParseStatus;
@@ -599,6 +600,57 @@ void rejects_invalid_literal_utf8_sequences() {
   }
 }
 
+void parses_canonical_host_action_binding_with_full_prefix() {
+  // Fixed example UUID: host tests only, never a real/default mapping.
+  static constexpr const char* kValue =
+      "host_action:123e4567-e89b-42d3-a456-426614174000";
+  const auto result =
+      ai_keyboard::parse_config_payload(payload_with_string_action(kValue));
+
+  assert(result.status == ConfigParseStatus::Ok);
+  const auto& action = result.config.keymap.action_for(InputId::Key1);
+  assert(action.kind == ActionKind::HostAction);
+  // Parsed config keeps the complete host_action: value including prefix.
+  assert(action.host_action == kValue);
+  assert(action.text.empty());
+  assert(action.hotkey.empty());
+
+  const auto down = ai_keyboard::event_for_action(
+      action,
+      ai_keyboard::InputPhase::Pressed,
+      "RightMeta",
+      "AltGr");
+  assert(down.kind == ai_keyboard::FirmwareEventKind::HostAction);
+  assert(down.value == kValue);
+
+  const auto up = ai_keyboard::event_for_action(
+      action,
+      ai_keyboard::InputPhase::Released,
+      "RightMeta",
+      "AltGr");
+  assert(up.kind == ai_keyboard::FirmwareEventKind::None);
+  assert(up.value.empty());
+}
+
+void rejects_non_canonical_host_action_bindings_fail_closed() {
+  // Every non-canonical form rejects the whole config; nothing is
+  // lower-cased or repaired.
+  const char* invalid_values[] = {
+      "host_action:123E4567-e89b-42d3-a456-426614174000",  // uppercase
+      "host_action:123e4567-e89b-42d3-a456-42661417400",   // 35 chars
+      "host_action:123e4567-e89b-42d3-a456-4266141740000", // 37 chars
+      "host_action:123e4567e-89b-42d3-a456-426614174000",  // hyphen shifted
+      "host_action:g23e4567-e89b-42d3-a456-426614174000",  // illegal char
+      "host_action:",                                      // prefix only
+      "123e4567-e89b-42d3-a456-426614174000",              // no prefix
+  };
+  for (const char* value : invalid_values) {
+    const auto result = ai_keyboard::parse_config_payload(
+        payload_with_string_action(value));
+    assert(result.status == ConfigParseStatus::UnknownAction);
+  }
+}
+
 int main() {
   migrates_exact_legacy_factory_keymap_to_platform_semantics();
   explicit_custom_sources_survive_exact_legacy_keymap_migration();
@@ -620,5 +672,7 @@ int main() {
   decodes_escaped_json_control_characters();
   rejects_isolated_or_invalid_utf16_surrogates();
   rejects_invalid_literal_utf8_sequences();
+  parses_canonical_host_action_binding_with_full_prefix();
+  rejects_non_canonical_host_action_bindings_fail_closed();
   return 0;
 }
