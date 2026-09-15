@@ -3527,6 +3527,27 @@ void runtime_logs_do_not_emit_user_or_device_identifiers() {
   }
 }
 
+void host_action_example_uuids_never_ship_in_production_sources() {
+  // T02/T04 contract: fixed example UUIDs are host-test fixtures only and
+  // must never reach the default keymap, production config/parser, NVS store
+  // or app dispatch. The prefix itself is allowed in production; only the
+  // fixed example UUID bodies are forbidden.
+  static constexpr const char* kProductionSources[] = {
+      "main/app_main.cpp",
+      "main/platform/nvs_store.cpp",
+      "components/keyboard/src/keymap.cpp",
+      "components/keyboard/src/config_payload.cpp",
+      "components/keyboard/src/config_state.cpp",
+      "components/keyboard/src/host_action_protocol.cpp",
+      "components/keyboard/include/keyboard/host_action_protocol.h",
+      "components/keyboard/include/keyboard/keymap.h",
+  };
+  for (const char* path : kProductionSources) {
+    const auto source = read_source(path);
+    assert(source.find("123e4567-e89b") == std::string::npos);
+  }
+}
+
 void config_status_publication_uses_shared_bounded_ble_encoders() {
   const auto ble = read_source("main/platform/ble_hid.cpp");
   const auto publish = section(
@@ -3584,6 +3605,7 @@ int main() {
   ble_persistence_is_capacity_safe_and_migrated_before_advertising();
   peripheral_power_lifecycle_is_system_owned_and_ordered();
   runtime_logs_do_not_emit_user_or_device_identifiers();
+  host_action_example_uuids_never_ship_in_production_sources();
   config_status_publication_uses_shared_bounded_ble_encoders();
   return 0;
 }
