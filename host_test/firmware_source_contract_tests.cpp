@@ -3548,6 +3548,44 @@ void host_action_example_uuids_never_ship_in_production_sources() {
   }
 }
 
+void host_action_transport_reuses_shared_encoding_and_single_route() {
+  const auto usb = read_source("main/platform/usb_hid.cpp");
+  const auto ble = read_source("main/platform/ble_hid.cpp");
+  const auto app = read_source("main/app_main.cpp");
+
+  // Both transports include the one shared encoder boundary and handle the
+  // event in their existing firmware-event switch.
+  for (const auto* source : {&usb, &ble}) {
+    assert(source->find("#include \"keyboard/host_action_protocol.h\"") !=
+           std::string::npos);
+    assert(count_occurrences(
+               *source,
+               "case ai_keyboard::FirmwareEventKind::HostAction:") == 1);
+    assert(source->find("ai_keyboard::host_action_uuid_body(") !=
+           std::string::npos);
+    assert(source->find("ai_keyboard::kHostActionAppCommandKind") !=
+           std::string::npos);
+    // The frozen values are asserted against the shared constants; the
+    // platforms never define their own Host Action kind/length copy and the
+    // data length stays 36, never 48 (prefix-inclusive).
+    assert(source->find("kAppCommandKindHostAction") == std::string::npos);
+    assert(source->find("kHostActionDataLen == 36") != std::string::npos);
+    assert(source->find("kHostActionTotalChunks == 1") !=
+           std::string::npos);
+    // Both enqueue via the pre-existing single-chunk App Command primitive.
+    assert(source->find("send_app_command_report(") != std::string::npos);
+  }
+
+  // The dispatcher only names the event for logging; it must not encode it
+  // or open a dedicated Host Action send branch that could dual-send. Single
+  // USB-first routing with suppressed BLE fallback stays the only path.
+  assert(count_occurrences(
+             app, "ai_keyboard::FirmwareEventKind::HostAction") == 1);
+  assert(app.find("kind = \"host_action\"") != std::string::npos);
+  assert(app.find("BLE fallback suppressed") != std::string::npos);
+  assert(app.find("host_action_protocol.h") == std::string::npos);
+}
+
 void config_status_publication_uses_shared_bounded_ble_encoders() {
   const auto ble = read_source("main/platform/ble_hid.cpp");
   const auto publish = section(
@@ -3606,6 +3644,7 @@ int main() {
   peripheral_power_lifecycle_is_system_owned_and_ordered();
   runtime_logs_do_not_emit_user_or_device_identifiers();
   host_action_example_uuids_never_ship_in_production_sources();
+  host_action_transport_reuses_shared_encoding_and_single_route();
   config_status_publication_uses_shared_bounded_ble_encoders();
   return 0;
 }

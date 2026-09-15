@@ -19,6 +19,7 @@
 #include "keyboard/ble_status_wire.h"
 #include "keyboard/config_status.h"
 #include "keyboard/hid_keycode.h"
+#include "keyboard/host_action_protocol.h"
 #include "platform/nvs_store.h"
 #include "sdkconfig.h"
 
@@ -72,6 +73,16 @@ static_assert(kAppCommandHeaderLen ==
               ai_keyboard::kFixedTextAppCommandHeaderLen);
 static_assert(kAppCommandChunkDataLen ==
               ai_keyboard::kFixedTextAppCommandChunkDataLen);
+// Host Action v1: BLE forwards the same shared frozen constants to the
+// existing 0x11 App Command container instead of defining its own copy.
+static_assert(ai_keyboard::kHostActionAppCommandReportId == kReportIdAppCommand);
+static_assert(ai_keyboard::kHostActionAppCommandKind == 0x05);
+static_assert(ai_keyboard::kHostActionChunkIndex == 0);
+static_assert(ai_keyboard::kHostActionTotalChunks == 1);
+static_assert(ai_keyboard::kHostActionDataLen == 36);
+static_assert(ai_keyboard::kHostActionAppCommandPayloadLen ==
+              kAppCommandReportPayloadLen);
+static_assert(ai_keyboard::kHostActionUuidTextLen <= kAppCommandChunkDataLen);
 static_assert(ai_keyboard::kConfigMaxJsonLen == 2048);
 static_assert(sizeof(ai_keyboard::kConfigStatusFallbackJson) - 1 <=
               ai_keyboard::kConfigStatusGattSafeLen);
@@ -1948,6 +1959,23 @@ bool BleHidTransport::send_firmware_event_for_owner(
                static_cast<unsigned>(event.value.size()),
                static_cast<unsigned>(chunks));
       return send_fixed_text_command(event.value, expected_owner);
+    }
+    case ai_keyboard::FirmwareEventKind::HostAction: {
+      ESP_LOGI(kTag, "ACTION %s host_action_ble", source);
+      // Same shared encoding boundary as USB: validate/strip in the shared
+      // helper and enqueue one existing single-chunk 0x11 App Command report.
+      const auto body = ai_keyboard::host_action_uuid_body(event.value);
+      if (body.size() != ai_keyboard::kHostActionUuidTextLen) {
+        ESP_LOGW(kTag, "BLE host_action rejected non-canonical value");
+        return false;
+      }
+      return send_app_command_report(
+          ai_keyboard::kHostActionAppCommandKind,
+          ai_keyboard::kHostActionChunkIndex,
+          ai_keyboard::kHostActionTotalChunks,
+          reinterpret_cast<const std::uint8_t*>(body.data()),
+          body.size(),
+          expected_owner);
     }
     case ai_keyboard::FirmwareEventKind::AppCommand:
       ESP_LOGI(kTag, "ACTION %s app_command", source);

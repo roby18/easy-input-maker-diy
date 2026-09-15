@@ -47,6 +47,18 @@ void app_commands_prefer_usb_even_when_ble_is_connected() {
              true) == FirmwareTransportRoute::UsbFirst);
 }
 
+void host_action_uses_the_same_usb_first_single_route() {
+  // Host Action rides the existing non-keyboard event route. The BLE
+  // connected flag must not select a second channel or enable dual send.
+  const FirmwareEvent host_action{
+      FirmwareEventKind::HostAction,
+      "host_action:123e4567-e89b-12d3-a456-426614174000"};
+  assert(ai_keyboard::route_for_firmware_event(host_action, true) ==
+         FirmwareTransportRoute::UsbFirst);
+  assert(ai_keyboard::route_for_firmware_event(host_action, false) ==
+         FirmwareTransportRoute::UsbFirst);
+}
+
 void usb_endpoint_lifetime_treats_every_mount_callback_as_a_new_endpoint() {
   UsbEndpointLifetime lifetime;
   assert(!lifetime.mounted());
@@ -707,6 +719,7 @@ int main() {
   fixed_text_prefers_usb_even_when_ble_is_connected();
   fixed_text_prefers_usb_when_ble_is_not_connected();
   app_commands_prefer_usb_even_when_ble_is_connected();
+  host_action_uses_the_same_usb_first_single_route();
   usb_endpoint_lifetime_treats_every_mount_callback_as_a_new_endpoint();
   usb_unmount_remount_is_visible_when_intermediate_state_is_not_sampled();
   usb_endpoint_epoch_wraps_without_exposing_zero();

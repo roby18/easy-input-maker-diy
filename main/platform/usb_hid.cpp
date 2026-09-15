@@ -13,6 +13,7 @@
 #include "keyboard/board_pins.h"
 #include "keyboard/config_receiver.h"
 #include "keyboard/fixed_text_protocol.h"
+#include "keyboard/host_action_protocol.h"
 #include "keyboard/hid_keycode.h"
 #include "keyboard/status_hid_protocol.h"
 #include "tinyusb.h"
@@ -51,6 +52,17 @@ static_assert(kAppCommandHeaderLen ==
               ai_keyboard::kFixedTextAppCommandHeaderLen);
 static_assert(kAppCommandChunkDataLen ==
               ai_keyboard::kFixedTextAppCommandChunkDataLen);
+// Host Action v1: the platform never defines its own kind/length constants;
+// it only forwards the shared frozen values to the existing App Command
+// container, so USB and BLE share one encoding boundary.
+static_assert(ai_keyboard::kHostActionAppCommandReportId == kReportIdAppCommand);
+static_assert(ai_keyboard::kHostActionAppCommandKind == 0x05);
+static_assert(ai_keyboard::kHostActionChunkIndex == 0);
+static_assert(ai_keyboard::kHostActionTotalChunks == 1);
+static_assert(ai_keyboard::kHostActionDataLen == 36);
+static_assert(ai_keyboard::kHostActionAppCommandPayloadLen ==
+              kAppCommandReportPayloadLen);
+static_assert(ai_keyboard::kHostActionUuidTextLen <= kAppCommandChunkDataLen);
 constexpr std::uint16_t kUsbVid = 0x303A;
 constexpr std::uint16_t kUsbPid = 0x1006;
 constexpr std::uint16_t kUsbBcdDevice = 0x010A;
@@ -1439,6 +1451,24 @@ bool UsbHidTransport::send_firmware_event_for_epoch(
         return type_text(event.value, expected_epoch);
       }
       return send_fixed_text_command(event.value, expected_epoch);
+    case ai_keyboard::FirmwareEventKind::HostAction: {
+      ESP_LOGI(kTag, "ACTION %s host_action_usb", source);
+      // One frozen encoder boundary for USB and BLE: validate/strip via the
+      // shared helper, then enqueue one 63-byte App Command report through
+      // the existing single-chunk path. [40..62] stays zero in the frame.
+      const auto body = ai_keyboard::host_action_uuid_body(event.value);
+      if (body.size() != ai_keyboard::kHostActionUuidTextLen) {
+        ESP_LOGW(kTag, "USB host_action rejected non-canonical value");
+        return false;
+      }
+      return send_app_command_report(
+          ai_keyboard::kHostActionAppCommandKind,
+          ai_keyboard::kHostActionChunkIndex,
+          ai_keyboard::kHostActionTotalChunks,
+          reinterpret_cast<const std::uint8_t*>(body.data()),
+          body.size(),
+          expected_epoch);
+    }
     case ai_keyboard::FirmwareEventKind::AppCommand:
       return false;
   }

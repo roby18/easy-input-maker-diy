@@ -1391,6 +1391,9 @@ void dispatch_firmware_event(AppContext* app,
     case ai_keyboard::FirmwareEventKind::FixedText:
       kind = "text";
       break;
+    case ai_keyboard::FirmwareEventKind::HostAction:
+      kind = "host_action";
+      break;
     case ai_keyboard::FirmwareEventKind::AppCommand:
       kind = "app";
       break;
