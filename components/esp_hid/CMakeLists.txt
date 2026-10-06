@@ -6,6 +6,20 @@
 # single HID-service source needed to preserve the FEATURE writer connection
 # are patched locally. Every other source and all upstream public/private
 # headers come from the exact ESP-IDF components pinned below.
+
+# Hash the CR-stripped content instead of the raw working-tree bytes. A
+# Windows ESP-IDF checkout made with core.autocrlf=true stores LF blobs in git
+# (the tree still reports clean) but renders sources as CRLF, which would make
+# file(SHA256) diverge from the audited digest for a content-identical file.
+# Normalization keeps the audit byte-exact against source content on both LF
+# and CRLF checkouts; any real source change still fails closed.
+function(easy_input_audited_source_sha256 source_path out_var)
+    file(READ "${source_path}" _audited_source)
+    string(REPLACE "\r" "" _audited_source_lf "${_audited_source}")
+    string(SHA256 _audited_digest "${_audited_source_lf}")
+    set("${out_var}" "${_audited_digest}" PARENT_SCOPE)
+endfunction()
+
 idf_component_get_property(upstream_esp_hid_dir esp_hid COMPONENT_OVERRIDEN_DIR)
 if(NOT upstream_esp_hid_dir)
     message(FATAL_ERROR
@@ -26,7 +40,8 @@ if(NOT EXISTS "${upstream_nimble_hidd}")
     message(FATAL_ERROR
         "ESP-IDF v5.5.5 esp_hid backend not found at '${upstream_nimble_hidd}'")
 endif()
-file(SHA256 "${upstream_nimble_hidd}" upstream_nimble_hidd_sha256)
+easy_input_audited_source_sha256(
+    "${upstream_nimble_hidd}" upstream_nimble_hidd_sha256)
 if(NOT upstream_nimble_hidd_sha256 STREQUAL expected_upstream_nimble_hidd_sha256)
     message(FATAL_ERROR
         "ESP-IDF esp_hid/nimble_hidd.c does not match the audited v5.5.5 source. "
@@ -47,7 +62,8 @@ if(NOT EXISTS "${upstream_ble_svc_hid}")
     message(FATAL_ERROR
         "ESP-IDF v5.5.5 NimBLE HID service not found at '${upstream_ble_svc_hid}'")
 endif()
-file(SHA256 "${upstream_ble_svc_hid}" upstream_ble_svc_hid_sha256)
+easy_input_audited_source_sha256(
+    "${upstream_ble_svc_hid}" upstream_ble_svc_hid_sha256)
 if(NOT upstream_ble_svc_hid_sha256 STREQUAL
        expected_upstream_ble_svc_hid_sha256)
     message(FATAL_ERROR

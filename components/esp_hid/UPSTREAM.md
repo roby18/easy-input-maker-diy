@@ -15,6 +15,10 @@ same name under `IDF_PATH/components`.
   `components/bt/host/nimble/nimble/nimble/host/services/hid/src/ble_svc_hid.c`
 - Upstream `ble_svc_hid.c` SHA-256:
   `b9c92dce9a0a678ca96c36b2d078456459a6cb66438b5ea47ac99d2c314390bf`
+- Both hashes are computed over the LF-normalized source (CR bytes stripped),
+  so a content-identical Windows checkout rendered as CRLF by
+  `core.autocrlf=true` (clean git tree, LF blobs in the index) still matches;
+  any real content change still fails closed.
 - License: Apache-2.0
 
 The upstream source retains its Espressif copyright and SPDX headers.
