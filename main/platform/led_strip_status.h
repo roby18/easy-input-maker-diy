@@ -70,7 +70,7 @@ class StatusLedStrip {
   bool agent_status_valid(std::uint32_t now_ms) const;
   void render_background_status(std::uint32_t now_ms);
   void render_agent_status();
-  void render_idle_status();
+  void render_idle_status(std::uint32_t now_ms);
   void set_all(Rgb color);
   void render_active_effect();
   void render_solid_effect();
@@ -94,10 +94,9 @@ class StatusLedStrip {
   bool agent_status_active_ = false;
   bool agent_status_rendered_ = false;
   bool idle_rendered_ = false;
-  // Persistent transport state retained from status events so the idle
-  // background can show a power-on indicator without transient feedback.
-  bool usb_connected_ = false;
-  bool ble_connected_ = false;
+  // Last rendered green-heartbeat phase so the idle background is repainted
+  // only at pulse on/off edges instead of every owner pass.
+  bool heartbeat_pulse_state_ = false;
 };
 
 }  // namespace easy_input

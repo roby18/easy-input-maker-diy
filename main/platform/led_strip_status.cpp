@@ -29,6 +29,15 @@ constexpr std::array<Rgb, ai_keyboard::BootLedSequence::kPixelCount>
     }};
 static_assert(ai_keyboard::kWs2812Count ==
               ai_keyboard::BootLedSequence::kPixelCount);
+// Persistent "device is alive" indication while awake with no higher-priority
+// effect: the centre pixel emits one short green pulse per period and stays
+// dark between beats. WS2812 pixels latch the last frame, so only the two
+// phase edges need a flush; next_update_deadline_ms() schedules both. The
+// board BOOT key resets the MCU into ROM download through the K2/U10 circuit,
+// so firmware cannot poll that key or drive the strip while in download mode.
+constexpr std::uint32_t kHeartbeatPeriodMs = 1600;
+constexpr std::uint32_t kHeartbeatPulseMs = 120;
+constexpr Rgb kHeartbeatColor{0, 18, 0};
 
 Rgb to_rgb(ai_keyboard::FeedbackColor color) {
   return {color.red, color.green, color.blue};
@@ -295,7 +304,6 @@ void StatusLedStrip::show_status_event(StatusLedEvent event, std::uint32_t now_m
       };
   switch (event) {
     case StatusLedEvent::BleConnected:
-      ble_connected_ = true;
       idle_rendered_ = false;
       show_status_feedback({true,
                             ai_keyboard::FeedbackEffectKind::LightBarRipple,
@@ -305,7 +313,6 @@ void StatusLedStrip::show_status_event(StatusLedEvent event, std::uint32_t now_m
                             180});
       return;
     case StatusLedEvent::BleDisconnected:
-      ble_connected_ = false;
       idle_rendered_ = false;
       show_status_feedback({true,
                             ai_keyboard::FeedbackEffectKind::ConfirmPulse,
@@ -315,7 +322,6 @@ void StatusLedStrip::show_status_event(StatusLedEvent event, std::uint32_t now_m
                             80});
       return;
     case StatusLedEvent::UsbConnected:
-      usb_connected_ = true;
       idle_rendered_ = false;
       show_status_feedback({true,
                             ai_keyboard::FeedbackEffectKind::DirectionalFlow,
@@ -325,7 +331,6 @@ void StatusLedStrip::show_status_event(StatusLedEvent event, std::uint32_t now_m
                             90});
       return;
     case StatusLedEvent::UsbDisconnected:
-      usb_connected_ = false;
       idle_rendered_ = false;
       show_status_feedback({true,
                             ai_keyboard::FeedbackEffectKind::DirectionalFlow,
@@ -508,6 +513,15 @@ void StatusLedStrip::update(std::uint32_t now_ms) {
   if (update_active_feedback(now_ms)) {
     return;
   }
+  // Repaint the idle background only at heartbeat phase edges. Transient
+  // effects and agent status own the strip while active, so phase changes
+  // skipped during their ownership simply resolve to one redraw afterwards.
+  const bool heartbeat_pulse =
+      (now_ms % kHeartbeatPeriodMs) < kHeartbeatPulseMs;
+  if (heartbeat_pulse != heartbeat_pulse_state_) {
+    heartbeat_pulse_state_ = heartbeat_pulse;
+    idle_rendered_ = false;
+  }
   if (!idle_rendered_) {
     render_background_status(now_ms);
     idle_rendered_ = true;
@@ -544,9 +558,16 @@ bool StatusLedStrip::next_update_deadline_ms(
     }
   }
   add(agent_status_active_, agent_status_expires_ms_);
-  if (!idle_rendered_ && !active_feedback_.active &&
-      !cold_boot_sequence_.active()) {
-    add(true, now_ms);
+  if (!cold_boot_sequence_.active() && !active_feedback_.active &&
+      !agent_status_active_) {
+    if (!idle_rendered_) {
+      add(true, now_ms);
+    }
+    const std::uint32_t phase = now_ms % kHeartbeatPeriodMs;
+    const std::uint32_t remaining =
+        phase < kHeartbeatPulseMs ? kHeartbeatPulseMs - phase
+                                  : kHeartbeatPeriodMs - phase;
+    add(true, now_ms + remaining);
   }
   if (armed) {
     *deadline_ms = nearest;
@@ -567,7 +588,7 @@ void StatusLedStrip::render_background_status(std::uint32_t now_ms) {
   }
 
   agent_status_rendered_ = false;
-  render_idle_status();
+  render_idle_status(now_ms);
 }
 
 void StatusLedStrip::render_agent_status() {
@@ -590,23 +611,16 @@ void StatusLedStrip::render_agent_status() {
   }
 }
 
-void StatusLedStrip::render_idle_status() {
+void StatusLedStrip::render_idle_status(std::uint32_t now_ms) {
   set_all({});
-  // Persistent power-on indicator on the centre pixel while awake: a
-  // battery-powered board with no host link is visibly "on". USB takes the
-  // dim-white state, BLE-only shows dim blue, a device with no host shows a
-  // fainter white. Only one static frame is emitted; no periodic refresh.
+  // Persistent green heartbeat on the centre pixel while awake with no
+  // transient effect: one short pulse per period, fully dark between beats.
   // Transient effects, config/agent visuals and the deep-sleep black frame
-  // still own the strip and blank/override this indicator as before.
+  // still own the strip and override this indicator as before.
   const std::size_t center = leds_.size() / 2U;
-  if (center < leds_.size()) {
-    if (usb_connected_) {
-      leds_[center] = {5, 5, 5};
-    } else if (ble_connected_) {
-      leds_[center] = {0, 0, 9};
-    } else {
-      leds_[center] = {2, 2, 2};
-    }
+  if (center < leds_.size() &&
+      (now_ms % kHeartbeatPeriodMs) < kHeartbeatPulseMs) {
+    leds_[center] = kHeartbeatColor;
   }
   flush();
 }

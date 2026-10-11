@@ -3498,7 +3498,67 @@ void peripheral_power_lifecycle_is_system_owned_and_ordered() {
 
   assert(app_main.find("esp_reset_reason()") != std::string::npos);
   assert(app_main.find("reset_reason=%d brownout=%d") != std::string::npos);
-  assert(app_main.find("0.4.53.01") != std::string::npos);
+  assert(app_main.find("0.4.53.02") != std::string::npos);
+}
+
+void idle_indicator_is_green_heartbeat_without_boot_key_polling() {
+  const auto led_source =
+      read_source("main/platform/led_strip_status.cpp");
+  const auto led_header =
+      read_source("main/platform/led_strip_status.h");
+  const auto app_main = read_source("main/app_main.cpp");
+
+  // The awake idle background is a periodic green heartbeat on the centre
+  // pixel: one short pulse per period, fully dark between beats.
+  assert(led_source.find("kHeartbeatPeriodMs = 1600") != std::string::npos);
+  assert(led_source.find("kHeartbeatPulseMs = 120") != std::string::npos);
+  assert(led_source.find("kHeartbeatColor{0, 18, 0}") !=
+         std::string::npos);
+  assert(led_header.find("void render_idle_status(std::uint32_t now_ms)") !=
+         std::string::npos);
+  assert(led_header.find("bool heartbeat_pulse_state_") !=
+         std::string::npos);
+
+  const auto idle = section(
+      led_source,
+      "void StatusLedStrip::render_idle_status(",
+      "void StatusLedStrip::set_all(");
+  assert(idle.find("(now_ms % kHeartbeatPeriodMs) < kHeartbeatPulseMs") !=
+         std::string::npos);
+  assert(idle.find("leds_.size() / 2U") != std::string::npos);
+  assert(idle.find("kHeartbeatColor") != std::string::npos);
+
+  // update() must repaint only at pulse on/off edges and the deadline planner
+  // must arm both edges, otherwise the latching WS2812 strip never turns the
+  // heartbeat off (or wakes the owner on every loop).
+  const auto update_body = section(
+      led_source,
+      "void StatusLedStrip::update(",
+      "bool StatusLedStrip::next_update_deadline_ms(");
+  assert(update_body.find("heartbeat_pulse != heartbeat_pulse_state_") !=
+         std::string::npos);
+  const auto deadline_body = section(
+      led_source,
+      "bool StatusLedStrip::next_update_deadline_ms(",
+      "bool StatusLedStrip::agent_status_valid(");
+  assert(deadline_body.find("kHeartbeatPeriodMs - phase") !=
+         std::string::npos);
+  assert(deadline_body.find("kHeartbeatPulseMs - phase") !=
+         std::string::npos);
+
+  // The T13 static transport-coloured indicator is fully replaced by the
+  // heartbeat; its retained connection flags and idle colours must not linger.
+  assert(led_header.find("usb_connected_") == std::string::npos);
+  assert(led_header.find("ble_connected_") == std::string::npos);
+  assert(led_source.find("{5, 5, 5}") == std::string::npos);
+  assert(led_source.find("{0, 0, 9}") == std::string::npos);
+  assert(led_source.find("{2, 2, 2}") == std::string::npos);
+
+  // The board BOOT key resets the MCU into ROM download through K2/U10, so
+  // firmware must not poll GPIO0 to drive (or fake) a "boot mode" indicator.
+  assert(app_main.find("kBoot0Pin") == std::string::npos);
+  assert(led_source.find("kBoot0Pin") == std::string::npos);
+  assert(led_source.find("gpio_get_level") == std::string::npos);
 }
 
 void runtime_logs_do_not_emit_user_or_device_identifiers() {
@@ -3681,6 +3741,7 @@ int main() {
   encoder_text_caret_selection_uses_native_keyboard_chords();
   ble_persistence_is_capacity_safe_and_migrated_before_advertising();
   peripheral_power_lifecycle_is_system_owned_and_ordered();
+  idle_indicator_is_green_heartbeat_without_boot_key_polling();
   runtime_logs_do_not_emit_user_or_device_identifiers();
   host_action_example_uuids_never_ship_in_production_sources();
   host_action_transport_reuses_shared_encoding_and_single_route();
