@@ -1910,9 +1910,12 @@ extern "C" void tud_hid_set_report_cb(uint8_t instance,
                                        uint8_t const* buffer,
                                        uint16_t bufsize) {
   (void)instance;
-  // One protocol-level line for every host -> device HID report. Payload is
-  // never logged: feature buffers may contain user configuration or UUIDs.
-  ESP_LOGI(easy_input::kTag,
+  // Raw entry line for host -> device HID reports. Kept at DEBUG because
+  // legacy/foreign hosts poll Report ID 0x13 every couple of seconds, which
+  // would flood INFO logs and the CDC console in quiet mode. Every accepted
+  // report still has its semantic INFO line (CONFIG/AGENT/STATUS accepted).
+  // Payload is never logged: feature buffers may carry configuration/UUIDs.
+  ESP_LOGD(easy_input::kTag,
            "USB RX set_report id=0x%02X type=%s len=%u",
            static_cast<unsigned>(report_id),
            report_type == HID_REPORT_TYPE_FEATURE

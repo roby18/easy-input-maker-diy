@@ -3498,8 +3498,8 @@ void peripheral_power_lifecycle_is_system_owned_and_ordered() {
 
   assert(app_main.find("esp_reset_reason()") != std::string::npos);
   assert(app_main.find("reset_reason=%d brownout=%d") != std::string::npos);
-  assert(app_main.find("0.4.53.05") != std::string::npos);
-  assert(app_main.find("0.4.53.04") == std::string::npos);
+  assert(app_main.find("0.4.53.06") != std::string::npos);
+  assert(app_main.find("0.4.53.05") == std::string::npos);
 }
 
 void idle_indicator_is_green_heartbeat_without_boot_key_polling() {
@@ -3702,10 +3702,14 @@ void usb_cdc_debug_console_is_composite_and_payload_free() {
   assert(usb.find("TUD_CONFIG_DESCRIPTOR(1,\n                          3,") !=
          std::string::npos);
 
-  // Host -> device reports log exactly one raw protocol line; payload stays
-  // out of the log.
-  assert(usb.find("USB RX set_report id=0x%02X type=%s len=%u") !=
+  // Host -> device raw entry line is debug-only (legacy hosts poll Report
+  // ID 0x13 every couple of seconds); accepted reports still get semantic
+  // INFO lines. Payload is never part of the line.
+  assert(usb.find("ESP_LOGD(easy_input::kTag,\n"
+                  "           \"USB RX set_report id=0x%02X type=%s len=%u\"") !=
          std::string::npos);
+  assert(usb.find("ESP_LOGI(easy_input::kTag,\n"
+                  "           \"USB RX set_report") == std::string::npos);
 
   // The console installs a chained sink (UART0 preserved) and mirrors as soon
   // as the host has the CDC function configured: bulk traffic must not wait
@@ -3734,8 +3738,8 @@ void usb_cdc_debug_console_is_composite_and_payload_free() {
   assert(console.find("case 'l':") != std::string::npos);
 
   // A host polling Report ID 0x13 with legacy/foreign frames must not spam
-  // production or CDC logs: rejection is debug-only while the raw RX entry
-  // line above keeps receive visibility.
+  // production or CDC logs: both the raw RX entry and the rejection are
+  // debug-only, while accepted requests log their semantic INFO line.
   assert(usb.find("ESP_LOGD(kTag, \"USB STATUS invalid len=%u\"") !=
          std::string::npos);
 
