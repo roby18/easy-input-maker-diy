@@ -43,6 +43,7 @@
 #include "platform/led_strip_status.h"
 #include "platform/nvs_store.h"
 #include "platform/peripheral_power.h"
+#include "platform/usb_cdc_console.h"
 #include "platform/usb_hid.h"
 #if defined(EASY_INPUT_SPEAKER_DIAGNOSTIC) || \
     defined(EASY_INPUT_SPEAKER_ASSETS_PRODUCT)
@@ -72,7 +73,7 @@ constexpr const char* kFirmwareVersion =
 constexpr const char* kFirmwareVersion =
     "0.4.40-idf-v2-spk-boot-probe";
 #elif defined(EASY_INPUT_SPEAKER_ASSETS_PRODUCT)
-constexpr const char* kFirmwareVersion = "0.4.53.02";
+constexpr const char* kFirmwareVersion = "0.4.53.05";
 #else
 constexpr const char* kFirmwareVersion = "0.4.40-idf-v2-audio-pool";
 #endif
@@ -83,6 +84,9 @@ constexpr std::uint32_t kDeepSleepAfterMs =
     ai_keyboard::kDefaultPowerPolicy.deep_sleep_after_ms;
 constexpr std::uint32_t kAwakePowerSampleIntervalMs = 300000;
 constexpr std::uint32_t kAwakeHeartbeatLogIntervalMs = 600000;
+// Compact alive tick for an open CDC debug console. It is self-gated on DTR,
+// so closing the serial assistant removes the formatting work as well.
+constexpr std::uint32_t kCdcAliveHeartbeatIntervalMs = 10000;
 constexpr std::uint32_t kEncoderConfigModeHoldMs = 3000;
 constexpr std::uint32_t kPlatformSelectionModeTimeoutMs = 10000;
 constexpr int kEncoderScrollMaxReportMagnitude = 96;
@@ -204,6 +208,7 @@ struct AppContext {
   bool battery_sample_valid = false;
   std::uint32_t last_power_log_ms = 0;
   std::uint32_t last_heartbeat_log_ms = 0;
+  std::uint32_t last_cdc_alive_log_ms = 0;
   // Only debounced physical HMI events may advance this clock. Management,
   // transport, LED and audio work can wake the owner task but cannot defer the
   // 30-minute whole-device Deep Sleep deadline.
@@ -1148,6 +1153,71 @@ void reconcile_keyboard_transport_lifetimes(AppContext* app) {
   }
 }
 
+const char* hid_report_class_name(ai_keyboard::HidReportClass report_class) {
+  switch (report_class) {
+    case ai_keyboard::HidReportClass::KeyboardPress:
+      return "press";
+    case ai_keyboard::HidReportClass::KeyboardRelease:
+      return "release";
+    case ai_keyboard::HidReportClass::KeyboardAllReleased:
+      return "all_released";
+    case ai_keyboard::HidReportClass::AppCommand:
+      return "app";
+    case ai_keyboard::HidReportClass::AppCommandStatefulPress:
+      return "app_press";
+    case ai_keyboard::HidReportClass::AppCommandStatefulRelease:
+      return "app_release";
+  }
+  return "unknown";
+}
+
+// One protocol-level line per keyboard snapshot handed to a transport. The
+// default line carries owner/result/modifier bitmap/key count; the six HID
+// usage codes (still protocol codes, never decoded characters) are added only
+// after the CDC 'v' command. Mapped text/config payloads are never logged.
+void trace_keyboard_snapshot(ai_keyboard::KeyboardTransportOwner owner,
+                             const ai_keyboard::HidKeyboardSnapshot& snapshot,
+                             ai_keyboard::HidReportClass report_class,
+                             bool accepted) {
+  const bool suppressed =
+      owner == ai_keyboard::KeyboardTransportOwner::None ||
+      owner == ai_keyboard::KeyboardTransportOwner::Suppressed;
+  const char* result = !accepted
+                           ? "retry"
+                           : (suppressed ? "suppressed" : "queued");
+  unsigned key_count = 0;
+  for (const std::uint8_t usage : snapshot.keycodes) {
+    if (usage != 0U) {
+      ++key_count;
+    }
+  }
+  if (easy_input::debug_console::verbose()) {
+    ESP_LOGI(kTag,
+             "HID TX kb owner=%s result=%s class=%s mod=0x%02X fn=%u "
+             "usage=%02X %02X %02X %02X %02X %02X",
+             keyboard_transport_name(owner),
+             result,
+             hid_report_class_name(report_class),
+             static_cast<unsigned>(snapshot.modifier),
+             snapshot.apple_fn ? 1U : 0U,
+             static_cast<unsigned>(snapshot.keycodes[0]),
+             static_cast<unsigned>(snapshot.keycodes[1]),
+             static_cast<unsigned>(snapshot.keycodes[2]),
+             static_cast<unsigned>(snapshot.keycodes[3]),
+             static_cast<unsigned>(snapshot.keycodes[4]),
+             static_cast<unsigned>(snapshot.keycodes[5]));
+  } else {
+    ESP_LOGI(kTag,
+             "HID TX kb owner=%s result=%s class=%s mod=0x%02X fn=%u keys=%u",
+             keyboard_transport_name(owner),
+             result,
+             hid_report_class_name(report_class),
+             static_cast<unsigned>(snapshot.modifier),
+             snapshot.apple_fn ? 1U : 0U,
+             key_count);
+  }
+}
+
 bool send_keyboard_snapshot(AppContext* app,
                             const ai_keyboard::HidKeyboardSnapshot& snapshot,
                             ai_keyboard::HidReportClass report_class) {
@@ -1191,6 +1261,7 @@ bool send_keyboard_snapshot(AppContext* app,
       accepted = true;
       break;
   }
+  trace_keyboard_snapshot(owner, snapshot, report_class, accepted);
   return accepted;
 }
 
@@ -1397,8 +1468,10 @@ void dispatch_firmware_event(AppContext* app,
       kind = "app";
       break;
   }
-  ESP_LOGD(kTag,
-           "HID dispatch seq=%lu source=%s kind=%s route=%s usb=%u ble=%u",
+  // Protocol-level summary only: the mapped value (typed text, fixed text or
+  // Host Action UUID) is never part of this line. Failures add a WARN below.
+  ESP_LOGI(kTag,
+           "HID event seq=%lu source=%s kind=%s route=%s usb=%u ble=%u",
            static_cast<unsigned long>(sequence),
            source,
            kind,
@@ -2012,13 +2085,15 @@ void flush_pending_wheel_report(AppContext* app, std::uint32_t now_ms, bool forc
   if (!report.ble_owner.valid() || current_owner != report.ble_owner) {
     app->pending_wheel_reports.pop_if_sequence(report.sequence);
     ++app->wheel_transport_drops;
-    ESP_LOGD(kTag,
-             "BLE wheel owner changed; discarded seq=%lu vertical=%d "
-             "horizontal=%d drops=%lu",
-             static_cast<unsigned long>(report.sequence),
-             report.vertical,
-             report.horizontal,
-             static_cast<unsigned long>(app->wheel_transport_drops));
+    if (easy_input::debug_console::verbose()) {
+      ESP_LOGI(kTag,
+               "HID TX wheel owner=ble result=dropped seq=%lu vertical=%d "
+               "horizontal=%d drops=%lu",
+               static_cast<unsigned long>(report.sequence),
+               report.vertical,
+               report.horizontal,
+               static_cast<unsigned long>(app->wheel_transport_drops));
+    }
     return;
   }
 
@@ -2037,15 +2112,25 @@ void flush_pending_wheel_report(AppContext* app, std::uint32_t now_ms, bool forc
   if (!send_ble_mouse_wheel_report(
           app, vertical, horizontal, report.ble_owner)) {
     ++app->wheel_send_failures;
-    ESP_LOGD(kTag,
-             "BLE wheel HID busy; seq=%lu vertical=%d horizontal=%d failures=%lu",
-             static_cast<unsigned long>(report.sequence),
-             report.vertical,
-             report.horizontal,
-             static_cast<unsigned long>(app->wheel_send_failures));
+    if (easy_input::debug_console::verbose()) {
+      ESP_LOGI(kTag,
+               "HID TX wheel owner=ble result=busy seq=%lu vertical=%d "
+               "horizontal=%d failures=%lu",
+               static_cast<unsigned long>(report.sequence),
+               report.vertical,
+               report.horizontal,
+               static_cast<unsigned long>(app->wheel_send_failures));
+    }
     return;
   }
   app->pending_wheel_reports.consume_if_sequence(report.sequence, vertical, horizontal);
+  if (easy_input::debug_console::verbose()) {
+    ESP_LOGI(kTag,
+             "HID TX wheel owner=ble result=queued seq=%lu v=%d h=%d",
+             static_cast<unsigned long>(report.sequence),
+             vertical,
+             horizontal);
+  }
 }
 
 void show_encoder_scroll_feedback(AppContext* app,
@@ -2868,9 +2953,12 @@ bool handle_input_event(const easy_input::InputEvent& event, void* context) {
   }
 
   if (event.encoder_step != 0) {
-    ESP_LOGD(kTag, "%s step=%d", name, event.encoder_step);
+    // Detents can burst; only log them with verbose traces enabled.
+    if (easy_input::debug_console::verbose()) {
+      ESP_LOGI(kTag, "INPUT %s step=%d", name, event.encoder_step);
+    }
   } else {
-    ESP_LOGD(kTag, "%s %s", name, phase_name(event.phase));
+    ESP_LOGI(kTag, "INPUT %s %s", name, phase_name(event.phase));
   }
 
   if (encoder_turn) {
@@ -3297,6 +3385,18 @@ void process_pending_status_refresh(AppContext* app, std::uint32_t now_ms) {
 }
 
 void log_heartbeat(AppContext* app, std::uint32_t now_ms) {
+  // Compact alive tick only while a serial assistant holds the CDC port
+  // open: proves the firmware is running and shows live transport state.
+  if (easy_input::debug_console::dte_active() &&
+      now_ms - app->last_cdc_alive_log_ms >= kCdcAliveHeartbeatIntervalMs) {
+    app->last_cdc_alive_log_ms = now_ms;
+    ESP_LOGI(kTag,
+             "hb alive uptime=%lus usb=%u ble=%u inactive_ms=%lu",
+             static_cast<unsigned long>(now_ms / 1000U),
+             app->transport_usb_mounted ? 1U : 0U,
+             app->transport_ble_connected ? 1U : 0U,
+             static_cast<unsigned long>(now_ms - app->last_user_activity_ms));
+  }
   if (now_ms - app->last_heartbeat_log_ms < kAwakeHeartbeatLogIntervalMs) {
     return;
   }
@@ -3572,6 +3672,10 @@ extern "C" void app_main(void) {
   static AppContext app;
   app.platform_task = xTaskGetCurrentTaskHandle();
 
+  // Mirror ESP_LOG onto the USB CDC debug port in addition to UART0. Safe
+  // before TinyUSB installs: the sink no-ops until the interface enumerates.
+  easy_input::debug_console::begin();
+
   log_boot_summary();
   const auto wake_cause = esp_sleep_get_wakeup_cause();
   restore_retained_power_cycle(&app, wake_cause);
@@ -3604,6 +3708,7 @@ extern "C" void app_main(void) {
   app.ble.set_work_ready_callback(signal_async_work, &app);
   ESP_ERROR_CHECK(app.ble.begin());
   app.usb.set_work_ready_callback(signal_async_work, &app);
+  easy_input::debug_console::set_work_ready_callback(signal_async_work, &app);
   if constexpr (ai_keyboard::kExternalPowerSensePin >= 0) {
     app.usb_physical_presence.reset(
         usb_vbus_status_present(), millis());
@@ -3715,6 +3820,8 @@ extern "C" void app_main(void) {
     // short click to arrive. Poll with a fresh timestamp so queued ISR
     // snapshots and the settling sample always stay in chronological order.
     app.inputs.poll(millis(), handle_input_event, &app);
+    // Service the CDC serial-assistant console (commands + connect banner).
+    easy_input::debug_console::poll();
     flush_pending_wheel_report(&app, millis());
 #if defined(EASY_INPUT_SPEAKER_DIAGNOSTIC) || \
     defined(EASY_INPUT_SPEAKER_ASSETS_PRODUCT)

@@ -67,7 +67,12 @@ constexpr std::uint16_t kUsbVid = 0x303A;
 constexpr std::uint16_t kUsbPid = 0x1006;
 constexpr std::uint16_t kUsbBcdDevice = 0x010A;
 
-#define USB_HID_DESC_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN)
+// Composite configuration: HID stays interface 0 on EP 0x81 (byte-identical
+// enumeration for keyboard hosts); the CDC ACM debug function adds interfaces
+// 1/2 with interrupt-notify EP 0x82 and bulk EP 0x03/0x83. The CDC interface
+// only mirrors firmware logs for a serial assistant, it never carries HID.
+#define USB_DESC_TOTAL_LEN \
+  (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN + TUD_CDC_DESC_LEN)
 
 const std::uint8_t kHidReportDescriptor[] = {
     0x05, 0x01,        // Usage Page (Generic Desktop)
@@ -158,12 +163,13 @@ const std::uint8_t kHidReportDescriptor[] = {
 
 const std::uint8_t kHidConfigurationDescriptor[] = {
     TUD_CONFIG_DESCRIPTOR(1,
-                          1,
+                          3,
                           0,
-                          USB_HID_DESC_TOTAL_LEN,
+                          USB_DESC_TOTAL_LEN,
                           TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP,
                           100),
     TUD_HID_DESCRIPTOR(0, 4, false, sizeof(kHidReportDescriptor), 0x81, 64, 10),
+    TUD_CDC_DESCRIPTOR(1, 0, 0x82, 8, 0x03, 0x83, 64),
 };
 
 const tusb_desc_device_t kDeviceDescriptor = {
@@ -1309,7 +1315,11 @@ void UsbHidTransport::receive_status_request_report(const std::uint8_t* data,
                                                     std::size_t len) {
   ai_keyboard::StatusHidRequest request{};
   if (!ai_keyboard::decode_status_hid_request(data, len, &request)) {
-    ESP_LOGW(kTag, "USB STATUS invalid len=%u", static_cast<unsigned>(len));
+    // Legacy/foreign hosts poll Report ID 0x13 with frames that fail the
+    // magic/version/length validation every couple of seconds; the raw RX
+    // entry line still records the report, so keep this debug-only to avoid
+    // flooding production logs and the CDC console.
+    ESP_LOGD(kTag, "USB STATUS invalid len=%u", static_cast<unsigned>(len));
     return;
   }
   const auto endpoint_epoch = connection_epoch();
@@ -1900,6 +1910,15 @@ extern "C" void tud_hid_set_report_cb(uint8_t instance,
                                        uint8_t const* buffer,
                                        uint16_t bufsize) {
   (void)instance;
+  // One protocol-level line for every host -> device HID report. Payload is
+  // never logged: feature buffers may contain user configuration or UUIDs.
+  ESP_LOGI(easy_input::kTag,
+           "USB RX set_report id=0x%02X type=%s len=%u",
+           static_cast<unsigned>(report_id),
+           report_type == HID_REPORT_TYPE_FEATURE
+               ? "feature"
+               : (report_type == HID_REPORT_TYPE_OUTPUT ? "output" : "input"),
+           static_cast<unsigned>(bufsize));
   if (report_id == easy_input::kReportIdConfig && easy_input::s_active_transport != nullptr) {
     easy_input::s_active_transport->receive_config_report(buffer, bufsize);
   } else if (report_id == easy_input::kReportIdAgentStatus &&

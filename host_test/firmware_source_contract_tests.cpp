@@ -3498,7 +3498,8 @@ void peripheral_power_lifecycle_is_system_owned_and_ordered() {
 
   assert(app_main.find("esp_reset_reason()") != std::string::npos);
   assert(app_main.find("reset_reason=%d brownout=%d") != std::string::npos);
-  assert(app_main.find("0.4.53.02") != std::string::npos);
+  assert(app_main.find("0.4.53.05") != std::string::npos);
+  assert(app_main.find("0.4.53.04") == std::string::npos);
 }
 
 void idle_indicator_is_green_heartbeat_without_boot_key_polling() {
@@ -3565,6 +3566,8 @@ void runtime_logs_do_not_emit_user_or_device_identifiers() {
   const auto audio = read_source("main/platform/keyboard_audio.cpp");
   const auto ble = read_source("main/platform/ble_hid.cpp");
   const auto usb = read_source("main/platform/usb_hid.cpp");
+  const auto console =
+      read_source("main/platform/usb_cdc_console.cpp");
   const auto app = read_source("main/app_main.cpp");
 
   for (const auto* forbidden : {
@@ -3582,6 +3585,7 @@ void runtime_logs_do_not_emit_user_or_device_identifiers() {
     assert(audio.find(forbidden) == std::string::npos);
     assert(ble.find(forbidden) == std::string::npos);
     assert(usb.find(forbidden) == std::string::npos);
+    assert(console.find(forbidden) == std::string::npos);
     assert(app.find(forbidden) == std::string::npos);
   }
 }
@@ -3667,6 +3671,119 @@ void config_status_publication_uses_shared_bounded_ble_encoders() {
   assert(final_wire.find("std::snprintf") == std::string::npos);
 }
 
+void usb_cdc_debug_console_is_composite_and_payload_free() {
+  const auto defaults = read_source("sdkconfig.defaults");
+  const auto usb = read_source("main/platform/usb_hid.cpp");
+  const auto console_header =
+      read_source("main/platform/usb_cdc_console.h");
+  const auto console =
+      read_source("main/platform/usb_cdc_console.cpp");
+  const auto cmake = read_source("main/CMakeLists.txt");
+  const auto app = read_source("main/app_main.cpp");
+
+  // CDC is enabled at Kconfig level and the new translation unit is built.
+  assert(defaults.find("CONFIG_TINYUSB_CDC_ENABLED=y") != std::string::npos);
+  assert(defaults.find("CONFIG_TINYUSB_CDC_COUNT=1") != std::string::npos);
+  assert(cmake.find("platform/usb_cdc_console.cpp") != std::string::npos);
+
+  // Composite descriptor: HID stays interface 0 on EP 0x81 (unchanged for
+  // keyboard hosts), CDC is appended after it as interfaces 1/2 with its own
+  // endpoints and the configuration length includes the IAD+CDC bytes.
+  const auto hid_pos = usb.find(
+      "TUD_HID_DESCRIPTOR(0, 4, false, sizeof(kHidReportDescriptor), "
+      "0x81, 64, 10)");
+  const auto cdc_pos =
+      usb.find("TUD_CDC_DESCRIPTOR(1, 0, 0x82, 8, 0x03, 0x83, 64)");
+  assert(hid_pos != std::string::npos);
+  assert(cdc_pos != std::string::npos);
+  assert(hid_pos < cdc_pos);
+  assert(usb.find("(TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN + "
+                  "TUD_CDC_DESC_LEN)") != std::string::npos);
+  assert(usb.find("TUD_CONFIG_DESCRIPTOR(1,\n                          3,") !=
+         std::string::npos);
+
+  // Host -> device reports log exactly one raw protocol line; payload stays
+  // out of the log.
+  assert(usb.find("USB RX set_report id=0x%02X type=%s len=%u") !=
+         std::string::npos);
+
+  // The console installs a chained sink (UART0 preserved) and mirrors as soon
+  // as the host has the CDC function configured: bulk traffic must not wait
+  // for the optional ACM DTR line, otherwise terminals that never assert DTR
+  // see no output. RX/DTR events wake the owner task.
+  assert(console.find("esp_log_set_vprintf") != std::string::npos);
+  assert(console.find("s_previous_sink(format, previous_args)") !=
+         std::string::npos);
+  assert(console.find("tud_ready() && tud_cdc_n_ready(0)") !=
+         std::string::npos);
+  assert(console.find("tud_cdc_n_connected(0)") != std::string::npos);
+  assert(console.find("cdc diag ep_ready=%u dtr=%u rx_avail=%lu tx_free=%lu") !=
+         std::string::npos);
+
+  // CDC-only readability filter (UART0 sink unaffected): default mode keeps
+  // key/HID protocol tags at INFO, mutes the chatty unconfigured-network
+  // stack tags, and the 'l' command cycles quiet/errors/info at runtime.
+  assert(console.find("ConsoleMode s_mode{ConsoleMode::kQuiet};") !=
+         std::string::npos);
+  assert(console.find("kMutedTags[] = {\"wifi\", \"keyboard_audio\"}") !=
+         std::string::npos);
+  assert(console.find("\"easy_input\", \"usb_hid\", \"cdc_diag\"") !=
+         std::string::npos);
+  assert(console.find("bool line_allowed(const char* line)") !=
+         std::string::npos);
+  assert(console.find("case 'l':") != std::string::npos);
+
+  // A host polling Report ID 0x13 with legacy/foreign frames must not spam
+  // production or CDC logs: rejection is debug-only while the raw RX entry
+  // line above keeps receive visibility.
+  assert(usb.find("ESP_LOGD(kTag, \"USB STATUS invalid len=%u\"") !=
+         std::string::npos);
+
+  assert(console.find("extern \"C\" void tud_cdc_rx_cb") !=
+         std::string::npos);
+  assert(console.find("extern \"C\" void tud_cdc_line_state_cb") !=
+         std::string::npos);
+  assert(console.find("bool s_verbose{false};") != std::string::npos);
+  for (const auto* api :
+       {"void begin();", "void poll();", "bool dte_active();",
+        "bool verbose();"}) {
+    assert(console_header.find(api) != std::string::npos);
+  }
+
+  // Application wiring: sink installed before the boot summary, console
+  // serviced in the owner loop, and RX capable of waking that loop.
+  const auto begin_pos = app.find("easy_input::debug_console::begin();");
+  const auto boot_summary_pos = app.find("log_boot_summary();");
+  assert(begin_pos != std::string::npos);
+  assert(boot_summary_pos != std::string::npos);
+  assert(begin_pos < boot_summary_pos);
+  assert(app.find("easy_input::debug_console::poll();") !=
+         std::string::npos);
+  assert(app.find("easy_input::debug_console::set_work_ready_callback(") !=
+         std::string::npos);
+
+  // Key traces are protocol-level by default: the six HID usage codes appear
+  // only inside the verbose branch; mapped values must never be logged.
+  const auto trace = section(
+      app,
+      "void trace_keyboard_snapshot(",
+      "bool send_keyboard_snapshot(AppContext* app,");
+  const auto verbose_branch =
+      trace.find("if (easy_input::debug_console::verbose())");
+  const auto first_usage = trace.find("snapshot.keycodes[0]");
+  assert(verbose_branch != std::string::npos);
+  assert(first_usage != std::string::npos);
+  assert(verbose_branch < first_usage);
+  assert(trace.find("event.value") == std::string::npos);
+
+  // The CDC alive heartbeat runs on a 10 s cadence while the host has the CDC
+  // function configured and carries only transport/uptime state.
+  assert(app.find("kCdcAliveHeartbeatIntervalMs = 10000") !=
+         std::string::npos);
+  assert(app.find("hb alive uptime=%lus usb=%u ble=%u inactive_ms=%lu") !=
+         std::string::npos);
+}
+
 void host_action_capability_stays_in_status_json_outside_app_command_payload() {
   // T08 separation of duties: the Report ID 0x11 / kind 0x05 Host Action
   // payload is only the 36-byte canonical UUID body. The status capability
@@ -3747,5 +3864,6 @@ int main() {
   host_action_transport_reuses_shared_encoding_and_single_route();
   host_action_capability_stays_in_status_json_outside_app_command_payload();
   config_status_publication_uses_shared_bounded_ble_encoders();
+  usb_cdc_debug_console_is_composite_and_payload_free();
   return 0;
 }

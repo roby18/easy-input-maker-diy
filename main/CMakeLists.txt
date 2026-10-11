@@ -7,6 +7,7 @@ set(easy_input_main_sources
   "platform/led_strip_status.cpp"
   "platform/nvs_store.cpp"
   "platform/peripheral_power.cpp"
+  "platform/usb_cdc_console.cpp"
   "platform/usb_hid.cpp"
 )
 
