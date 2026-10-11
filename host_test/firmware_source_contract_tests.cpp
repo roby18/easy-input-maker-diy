@@ -3498,8 +3498,7 @@ void peripheral_power_lifecycle_is_system_owned_and_ordered() {
 
   assert(app_main.find("esp_reset_reason()") != std::string::npos);
   assert(app_main.find("reset_reason=%d brownout=%d") != std::string::npos);
-  assert(app_main.find("0.4.53-idf-v2-ble-store-v1") !=
-         std::string::npos);
+  assert(app_main.find("0.4.53.01") != std::string::npos);
 }
 
 void runtime_logs_do_not_emit_user_or_device_identifiers() {
